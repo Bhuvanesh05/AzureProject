@@ -1,19 +1,82 @@
 # Starter pipeline
 # Start with a minimal pipeline that you can customize to build and deploy your code.
 # Add steps that build, run tests, deploy, and more:
-# https://aka.ms/yaml
+# https://aka.ms/yaml refs/heads/master
+
+
+name: $(BuildDefinitionName).$(Date:yyMMdd)$(Rev:.r)
 
 trigger:
-- master
+  - master
+resources:
+  repositories:
+  - repository: self
+    type: git
+    ref: refs/heads/master
+jobs:
+- job: SFDX_Deployment_Pipeline
+  displayName: SFDX Deployment Pipeline
+  timeoutInMinutes: 10000
+  cancelTimeoutInMinutes: 1
+  pool:
+    vmImage: ubuntu-latest 
+  steps:
+    - checkout: self
+      clean: true
+      persistCredentials: true
+    - task: Bash@3
+      displayName: Install SFDX Cli
+      inputs:
+        targetType: 'inline'
+        script: |
+          echo 'Installing sfdx cli'
+          npm install -g sfdx-cli
+          echo 'Installing sfdx git delta'
+          echo y | sfdx plugins:install sfdx-git-delta
+    - task: PowerShell@2
+      name: RestResponeGetCommit
+      displayName: Get previous commit Id
+      inputs:
+        targetType: inline
+        script: >-
+          $prevCommitId=$(git rev-parse HEAD^)
 
-pool:
-  vmImage: ubuntu-latest
 
-steps:
-- script: echo Hello, world!
-  displayName: 'Run a one-line script'
+           Write-Host "Id : $prevCommitId"
 
-- script: |
-    echo Add other tasks to build, test, and deploy your project.
-    echo See https://aka.ms/yaml
-  displayName: 'Run a multi-line script'
+           Write-Host "##vso[task.setvariable variable=prevCommitId;isOutput=true]$prevCommitId"
+    - task: PowerShell@2
+      displayName: Generate SFDX Git Delta
+      inputs:
+        targetType: 'inline'
+        script: |
+            $path = "delta/src"
+            Remove-Item $path -Recurse
+            sfdx sgd:source:delta --from $(RestResponeGetCommit.prevCommitId) --output delta/ --generate-delta
+            Get-Content delta/package/package.xml 
+
+            $sourcePath = "delta/package/package.xml"
+            $destinationPath = "delta/src" 
+            
+            Move-Item -path $sourcePath -destination $destinationPath
+
+            Get-Content delta/src/package.xml 
+            $packagePath = "delta/package"
+            $destructivePath = "delta/destructiveChanges" 
+            Remove-Item $packagePath -Recurse
+            Remove-Item $destructivePath -Recurse
+    - task: CopyFiles@2
+      displayName: Copy Saleforce Files To Staging Directory
+      inputs:
+        SourceFolder: $(Build.SourcesDirectory)
+        Contents: |
+          Assets/**
+          delta/**
+        TargetFolder: $(Build.ArtifactStagingDirectory)
+        CleanTargetFolder: true
+    - task: PublishPipelineArtifact@1
+      displayName: Publish Pipeline Artifact
+      inputs:
+        path: $(Build.ArtifactStagingDirectory)
+        artifactName: SalesforceBuildTemplate
+   
