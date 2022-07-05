@@ -1,4 +1,4 @@
-// new depoly using azure
+//test
 public class ContactAndLeadSearch
 {
     public static List<List<SObject>> searchContactsAndLeads(String str)
